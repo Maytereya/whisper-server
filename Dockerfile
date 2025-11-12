@@ -23,4 +23,4 @@ COPY whisper_app.py ./
 EXPOSE 8000
 # Для GPU разумно: float16 или int8_float16
 ENV MODEL=large-v3 DEVICE=cuda COMPUTE_TYPE=float16
-CMD ["uvicorn", "whisper_app:git app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "whisper_app:app", "--host", "0.0.0.0", "--port", "8000"]
