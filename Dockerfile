@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ln -s /usr/bin/python3.11 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
-WORKDIR /whisper_srv
+WORKDIR /whisper_server
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
