@@ -1,0 +1,27 @@
+services:
+  whisper-gpu:
+    build:
+      context: ./whisper-server
+      dockerfile: Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    environment:
+      MODEL: "large-v3"
+      DEVICE: "cuda"
+      COMPUTE_TYPE: "float16" # или int8_float16
+      LANGUAGE: "ru"
+    runtime: nvidia
+    ports: ["8001:8000"]
+    volumes:
+      - whisper_models:/models
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  whisper_models:
