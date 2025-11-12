@@ -1,7 +1,7 @@
 services:
   whisper-gpu:
     build:
-      context: ./whisper-server
+      context: .
       dockerfile: Dockerfile
     deploy:
       resources:
