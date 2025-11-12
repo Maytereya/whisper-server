@@ -1,4 +1,4 @@
-FROM nvidia/cuda:12.6.2-cudnn9-runtime-ubuntu22.04
+FROM nvidia/cuda:12.6.0-cudnn9-runtime-ubuntu22.04
 LABEL authors="Rakhmanov"
 # Dockerfile.cuda
 
