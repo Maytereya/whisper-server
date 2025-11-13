@@ -20,6 +20,16 @@ BEAM_SIZE_DEF = int(os.getenv("BEAM_SIZE", "5"))
 VAD_MIN_SIL = float(os.getenv("VAD_MIN_SILENCE", "0.5"))
 LANG_DEFAULT = os.getenv("LANGUAGE", "ru")
 MAX_CONCURRENT = 8
+
+# ---- load prompt once ----
+PROMPT_PATH = os.getenv("PROMPT_FILE", "custom_prompt.txt")
+try:
+    with open(PROMPT_PATH, "r", encoding="utf8") as f:
+        CUSTOM_PROMPT = f.read().strip()
+except:
+    CUSTOM_PROMPT = ""
+    print("⚠️ No custom prompt found, continuing without initial_prompt")
+
 # ----------------------------
 
 app = FastAPI(title="Whisper Server (faster-whisper)")
@@ -70,6 +80,7 @@ async def transcribe(
             beam_size=beam_size,
             vad_filter=vad,
             vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
+            initial_prompt=CUSTOM_PROMPT if CUSTOM_PROMPT else None,
         )
 
         t1 = time.time()
@@ -129,7 +140,7 @@ async def websocket_stream(ws: WebSocket):
             data = msg.get("bytes")
             if data:
                 # ожидаем float32 PCM, mono, 16 kHz
-                # если отправляешь int16 — нужно заменить dtype
+                # если отправляется int16 — нужно заменить dtype
                 chunk = np.frombuffer(data, dtype=np.float32)
                 if chunk.size > 0:
                     audio_buf.append(chunk)
@@ -150,6 +161,7 @@ async def websocket_stream(ws: WebSocket):
                 beam_size=BEAM_SIZE_DEF,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
+                initial_prompt=CUSTOM_PROMPT if CUSTOM_PROMPT else None,
             )
 
         text_parts = []

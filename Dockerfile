@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /whisper_server
 COPY requirements.txt ./
+COPY custom_prompt.txt ./
 
 # 👇 ВАЖНО: ставим зависимости именно в тот Python, который будет использоваться
 RUN python -m pip install --no-cache-dir -r requirements.txt

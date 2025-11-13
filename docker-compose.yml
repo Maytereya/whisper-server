@@ -18,6 +18,7 @@ services:
       COMPUTE_TYPE: "float16"
       LANGUAGE: "ru"
       CUDA_VISIBLE_DEVICES: "2"   # ← внутри контейнера будет видна только физическая GPU2 (#3)
+      PROMPT_FILE: "/whisper_server/custom_prompt.txt"
     ports:
       - "8001:8000"
     volumes:
