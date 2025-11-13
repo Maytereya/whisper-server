@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import time
@@ -8,6 +9,8 @@ import uvicorn
 from fastapi import FastAPI, File, UploadFile, Query, HTTPException
 from faster_whisper import WhisperModel
 from starlette.responses import JSONResponse
+from fastapi import WebSocket
+import numpy as np
 
 # -------- settings ----------
 MODEL_NAME = os.getenv("MODEL", "medium")  # tiny, base, small, medium, large-v3, distil-*
@@ -16,9 +19,11 @@ COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "int8")  # cpu: int8/int8_float32, cuda
 BEAM_SIZE_DEF = int(os.getenv("BEAM_SIZE", "5"))
 VAD_MIN_SIL = float(os.getenv("VAD_MIN_SILENCE", "0.5"))
 LANG_DEFAULT = os.getenv("LANGUAGE", "ru")
+MAX_CONCURRENT = 8
 # ----------------------------
 
 app = FastAPI(title="Whisper Server (faster-whisper)")
+semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
 t0 = time.time()
 model = WhisperModel(
@@ -32,53 +37,53 @@ load_s = round(time.time() - t0, 2)
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok", "model": MODEL_NAME, "device": DEVICE, "compute_type": COMPUTE_TYPE, "loaded_sec": load_s}
+    return {"name": "neiry.ai agent", "status": "ok", "model": MODEL_NAME, "device": DEVICE,
+            "compute_type": COMPUTE_TYPE, "loaded_sec": load_s}
 
 
-def _read_audio_bytes(file: UploadFile) -> tuple:
-    raw = file.file.read()
+async def _read_audio_bytes_async(file: UploadFile) -> tuple:
+    raw = await file.read()
     if not raw:
-        raise HTTPException(400, "empty upload")
-    # soundfile распознает формат, декодируем в float32, 16kHz mono
+        raise HTTPException(400, "ничего не загрузилось в Whisper")
     data, sr = sf.read(io.BytesIO(raw), always_2d=False, dtype="float32")
-    if sr != 16000:
-        # ресемпл на коленке не делаем – пусть клиент присылает 16k, либо юзай ffmpeg на клиенте
-        # если очень надо, подключай resampy/torchaudio и допиши ресемпл тут
-        pass
     return data, sr
 
 
 @app.post("/transcribe")
-def transcribe(
+async def transcribe(
         file: UploadFile = File(...),
         task: str = Query("transcribe", description="transcribe|translate"),
         language: Optional[str] = Query(None, description="например 'ru'"),
         beam_size: int = Query(BEAM_SIZE_DEF, ge=1, le=10),
         vad: bool = Query(True, description="включить встроенный VAD посекционно"),
 ) -> JSONResponse:
-    audio, sr = _read_audio_bytes(file)
 
-    # параметры распознавания
-    opts = dict(
-        task=task,
-        language=language or LANG_DEFAULT,
-        beam_size=beam_size,
-        vad_filter=vad,
-        vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
-    )
+    if file is None:
+        raise HTTPException(400, "no file")
+    async with semaphore:
+        audio, sr = await _read_audio_bytes_async(file)
 
-    t1 = time.time()
-    segments, info = model.transcribe(audio, **opts)
-    text_parts = []
-    segs = []
-    for s in segments:
-        text_parts.append(s.text)
-        segs.append({
-            "start": round(s.start, 3),
-            "end": round(s.end, 3),
-            "text": s.text
-        })
-    dur = round(time.time() - t1, 3)
+        # параметры распознавания
+        opts = dict(
+            task=task,
+            language=language or LANG_DEFAULT,
+            beam_size=beam_size,
+            vad_filter=vad,
+            vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
+        )
+
+        t1 = time.time()
+        segments, info = model.transcribe(audio, **opts)
+        text_parts = []
+        segs = []
+        for s in segments:
+            text_parts.append(s.text)
+            segs.append({
+                "start": round(s.start, 3),
+                "end": round(s.end, 3),
+                "text": s.text
+            })
+        dur = round(time.time() - t1, 3)
 
     return JSONResponse({
         "model": MODEL_NAME,
@@ -92,54 +97,93 @@ def transcribe(
     })
 
 
-from fastapi import WebSocket
-import numpy as np
-
 
 @app.websocket("/stream")
 async def websocket_stream(ws: WebSocket):
     """
-    Простой WebSocket для потоковой передачи аудио чанков.
-    Клиент отправляет бинарные чанки WAV/PCM, завершает 'END'.
+    Стриминговый WebSocket:
+    - клиент шлёт бинарные чанки audio (float32, 16 kHz, mono)
+    - по завершении шлёт текстовое сообщение 'END' ИЛИ просто закрывает соединение
+    - сервер склеивает аудио и один раз прогоняет через Whisper
     """
     await ws.accept()
-    audio_buf = []
+    audio_buf: list[np.ndarray] = []
+
     try:
         while True:
-            data = await ws.receive_bytes()
-            if data == b"END":
-                break
-            samples, _ = sf.read(io.BytesIO(data), dtype="float32")
-            audio_buf.append(samples)
+            msg = await ws.receive()
 
-        # склеиваем все полученные куски
+            # Клиент закрыл соединение
+            if msg["type"] == "websocket.disconnect":
+                break
+
+            # Текстовое сообщение (например, 'END')
+            text = msg.get("text")
+            if text is not None:
+                if text.strip().upper() == "END":
+                    break
+                # можно игнорировать прочий текст или логировать
+                continue
+
+            # Бинарные данные — аудиочанк
+            data = msg.get("bytes")
+            if data:
+                # ожидаем float32 PCM, mono, 16 kHz
+                # если отправляешь int16 — нужно заменить dtype
+                chunk = np.frombuffer(data, dtype=np.float32)
+                if chunk.size > 0:
+                    audio_buf.append(chunk)
+
         if not audio_buf:
             await ws.send_json({"error": "empty stream"})
-            await ws.close()
             return
 
         audio = np.concatenate(audio_buf)
+
         t1 = time.time()
-        segments, info = model.transcribe(
-            audio,
-            language=LANG_DEFAULT,
-            vad_filter=True,
-            vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
-        )
-        text = " ".join([s.text for s in segments]).strip()
+        # ограничиваем одновременно работающие распознавания
+        async with semaphore:
+            segments, info = model.transcribe(
+                audio,
+                task="transcribe",
+                language=LANG_DEFAULT,
+                beam_size=BEAM_SIZE_DEF,
+                vad_filter=True,
+                vad_parameters={"min_silence_duration_ms": int(VAD_MIN_SIL * 1000)},
+            )
+
+        text_parts = []
+        segs = []
+        for s in segments:
+            text_parts.append(s.text)
+            segs.append(
+                {
+                    "start": round(s.start, 3),
+                    "end": round(s.end, 3),
+                    "text": s.text,
+                }
+            )
         dur = round(time.time() - t1, 3)
 
-        await ws.send_json({
-            "model": MODEL_NAME,
-            "language": info.language,
-            "text": text,
-            "time_sec": dur,
-        })
+        await ws.send_json(
+            {
+                "model": MODEL_NAME,
+                "device": DEVICE,
+                "compute_type": COMPUTE_TYPE,
+                "language": info.language,
+                "language_probability": info.language_probability,
+                "time_sec": dur,
+                "text": " ".join(text_parts).strip(),
+                "segments": segs,
+            }
+        )
+
     except Exception as e:
+        # на всякий случай не падаем молча
         await ws.send_json({"error": str(e)})
     finally:
         await ws.close()
 
 
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+    uvicorn.run("whisper_app:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
