@@ -180,7 +180,7 @@ async def websocket_stream(ws: WebSocket):
 
     except Exception as e:
         # на всякий случай не падаем молча
-        await ws.send_json({"error": str(e)})
+        await ws.send_json({"Whisper websocket error": str(e)})
     finally:
         await ws.close()
 
