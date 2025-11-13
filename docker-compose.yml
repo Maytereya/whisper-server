@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: whisper-gpu
     restart: unless-stopped
     deploy:
       resources:
@@ -21,6 +22,8 @@ services:
       - "8001:8000"
     volumes:
       - whisper_models:/models
+    networks:
+      - local_net
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/healthz"]
       interval: 30s
@@ -29,3 +32,7 @@ services:
 
 volumes:
   whisper_models:
+
+networks:
+  local_net:
+    external: true
