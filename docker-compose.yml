@@ -23,6 +23,7 @@ services:
       - "8001:8000"
     volumes:
       - whisper_models:/models
+      - ./custom_prompt.txt:/whisper_server/custom_prompt.txt
     networks:
       - local_net
     healthcheck:
