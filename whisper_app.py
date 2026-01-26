@@ -2,16 +2,17 @@ import asyncio
 import io
 import os
 import time
-from typing import Optional
+from typing import Optional, List
 
 import numpy as np
 import soundfile as sf
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, Query, HTTPException
-from fastapi import WebSocket
+from fastapi import FastAPI, File, UploadFile, Query, HTTPException, WebSocket
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
+from fastapi import Header
+from config.load_secrets import get_secret
 
 # -------- settings ----------
 MODEL_NAME   = os.getenv("MODEL", "large-v3")        # tiny, base, small, medium, large-v3, distil-*
@@ -22,7 +23,30 @@ VAD_MIN_SIL   = float(os.getenv("VAD_MIN_SILENCE", "0.5"))
 LANG_DEFAULT  = os.getenv("LANGUAGE", "ru")
 MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "8"))
 
-app = FastAPI(title="Whisper Server (faster-whisper)")
+class Segment(BaseModel):
+    start: float
+    end: float
+    text: str
+
+class TranscribeResponse(BaseModel):
+    model: str
+    device: str
+    compute_type: str
+    language: str
+    language_probability: float
+    time_sec: float
+    text: str
+    segments: List[Segment]
+
+class HealthResponse(BaseModel):
+    name: str
+    status: str
+    model: str
+    device: str
+    compute_type: str
+    loaded_sec: float
+
+app = FastAPI(title="Whisper Server (faster-whisper)", version="1.0", root_path="/whisper")
 semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
 # ---- load prompt once ----
@@ -32,6 +56,14 @@ _prompt_cache = {
     "text": "",
     "mtime": None,
 }
+
+WHISPER_API_KEY = get_secret("whisper", "api_key")
+
+def require_whisper_key(x_api_key: Optional[str]) -> None:
+    if not WHISPER_API_KEY:
+        raise HTTPException(status_code=500, detail="WHISPER_API_KEY not configured")
+    if not x_api_key or x_api_key != WHISPER_API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
 
 
 def get_custom_prompt() -> str:
@@ -120,7 +152,7 @@ model = WhisperModel(
 load_s = round(time.time() - t0, 2)
 
 
-@app.get("/healthz")
+@app.get("/healthz", response_model=HealthResponse)
 def healthz():
     return {"name": "neiry.ai agent", "status": "ok", "model": MODEL_NAME, "device": DEVICE,
             "compute_type": COMPUTE_TYPE, "loaded_sec": load_s}
@@ -137,14 +169,16 @@ async def _read_audio_bytes_async(file: UploadFile) -> tuple:
     return data, sr
 
 
-@app.post("/transcribe")
+@app.post("/transcribe", response_model=TranscribeResponse)
 async def transcribe(
         file: UploadFile = File(...),
         task: str = Query("transcribe", description="transcribe|translate"),
         language: Optional[str] = Query(None, description="например 'ru'"),
         beam_size: int = Query(BEAM_SIZE_DEF, ge=1, le=10),
         vad: bool = Query(True, description="включить встроенный VAD посекционно"),
+        x_api_key: Optional[str] = Header(default=None),
 ) -> JSONResponse:
+    require_whisper_key(x_api_key)
     if file is None:
         raise HTTPException(400, "no file")
 
@@ -189,13 +223,17 @@ async def transcribe(
 
 
 @app.websocket("/stream")
-async def websocket_stream(ws: WebSocket):
+async def websocket_stream(ws: WebSocket, api_key: Optional[str] = Query(default=None)):
     """
     Стриминговый WebSocket:
     - клиент шлёт бинарные чанки audio (float32, 16 kHz, mono)
     - по завершении шлёт текстовое сообщение 'END' ИЛИ просто закрывает соединение
     - сервер склеивает аудио и один раз прогоняет через Whisper
     """
+    if not WHISPER_API_KEY or api_key != WHISPER_API_KEY:
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     audio_buf: list[np.ndarray] = []
     prompt = get_custom_prompt()
