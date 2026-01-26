@@ -24,7 +24,7 @@ services:
     volumes:
       - whisper_models:/models
       - ./custom_prompt.txt:/whisper_server/custom_prompt.txt
-      - ./config/secrets.ini:/whisper_server/config/secrets.ini:ro
+      - ./config/secrets.ini:/whisper_server/secrets.ini:ro
     networks:
       - local_net
     healthcheck:

@@ -12,7 +12,7 @@ from faster_whisper import WhisperModel
 from pydantic import BaseModel
 from starlette.responses import JSONResponse
 from fastapi import Header
-from config.load_secrets import get_secret
+from load_secrets import get_secret
 
 # -------- settings ----------
 MODEL_NAME   = os.getenv("MODEL", "large-v3")        # tiny, base, small, medium, large-v3, distil-*
