@@ -24,4 +24,4 @@ COPY whisper_app.py ./
 
 EXPOSE 8000
 ENV MODEL=large-v3 DEVICE=cuda COMPUTE_TYPE=float16
-CMD ["python", "-m", "uvicorn", "whisper_app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "whisper_app:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/whisper"]
