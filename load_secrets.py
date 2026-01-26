@@ -1,7 +1,7 @@
 from configparser import ConfigParser
 from pathlib import Path
 
-def get_secret(section: str, key: str, path: str = "whisper_server/config/secrets.ini") -> str:
+def get_secret(section: str, key: str, path: str = "whisper_server/secrets.ini") -> str:
     p = Path(path)
     if not p.exists():
         raise RuntimeError(f"Secrets file not found: {p}")

@@ -22,7 +22,6 @@ ENV MODELS_DIR=/models
 
 COPY whisper_app.py ./
 COPY load_secrets.py ./
-COPY config ./config
 
 EXPOSE 8000
 ENV MODEL=large-v3 DEVICE=cuda COMPUTE_TYPE=float16
